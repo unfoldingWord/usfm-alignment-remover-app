@@ -15,7 +15,7 @@ if (!owner || !repo || !ref) {
 } else {
   const dcsZipUrl = `https://git.door43.org/${owner}/${repo}/archive/${ref}.zip`;
 
-  // Step 2: Fetch Zip File from GitHub
+  // Step 2: Fetch Zip File from DCS
   axios
     .get(dcsZipUrl, { responseType: 'blob' })
     .then((response) => JSZip.loadAsync(response.data)) // Step 3: Load Zip File with JSZip
