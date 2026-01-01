@@ -176,7 +176,10 @@ const flattenChapterData = (chapterData) => {
     return aParsed.second - bParsed.second;
   }).forEach((verseNum) => {
     const verseData = chapterData[verseNum];
-    usfmStr += `\\v ${verseNum} ` + getUsfmForVerseContent(verseData);
+    if (verseNum != "front") {
+      usfmStr += `\\v ${verseNum} `;
+    }
+    usfmStr += getUsfmForVerseContent(verseData);
   });
 
   return usfmStr;
