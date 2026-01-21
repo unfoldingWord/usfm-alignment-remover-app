@@ -1,0 +1,5 @@
+{
+  "presets": [
+    ["@babel/preset-env", { "modules": false }] // This tells Babel to not transform modules.
+  ]
+}
