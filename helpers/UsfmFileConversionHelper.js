@@ -3,6 +3,150 @@ import usfmjs from 'usfm-js';
 import cloneDeep from "lodash.clonedeep";
 
 /**
+ * get all the alignments for verse from nested array (finds zaln objects)
+ * @param {array} verseSpanAlignments
+ * @return {*[]}
+ */
+export function getVerseAlignments(verseSpanAlignments) {
+  let alignments = [];
+
+  if (verseSpanAlignments) {
+    for (let alignment of verseSpanAlignments) {
+      if (alignment.tag === 'zaln') {
+        alignments.push(alignment);
+      }
+
+      if (alignment.children) {
+        const subAlignments = getVerseAlignments(alignment.children);
+
+        if (subAlignments.length) {
+          alignments = alignments.concat(subAlignments);
+        }
+      }
+    }
+  }
+  return alignments;
+}
+
+/**
+ * search through verseAlignments for word and get occurrences
+ * @param {object} verseAlignments
+ * @param {string|number} matchVerse
+ * @param {string} word
+ * @return {number}
+ */
+export function getWordCountInVerse(verseAlignments, matchVerse, word) {
+  let matchedAlignment = null;
+
+  for (let alignment of verseAlignments[matchVerse]) {
+    for (let topWord of alignment.topWords) {
+      if (topWord.word === word) {
+        matchedAlignment = topWord;
+        break;
+      }
+    }
+
+    if (matchedAlignment) {
+      break;
+    }
+  }
+
+  const wordCount = matchedAlignment && matchedAlignment.occurrences;
+  return wordCount || 0;
+}
+
+/**
+ * test to see if verse is a verseSpan
+ * @param {string|number} verse
+ * @return {boolean}
+ */
+export function isVerseSpan(verse) {
+  return verse.toString().includes('-');
+}
+
+/**
+ * called in case of invalid alignment that is not valid for the verse span, Sets alignment occurrence to high value
+ *    so that alignment will be invalidated and has to be reviewed.
+ * @param alignment
+ */
+export function invalidateAlignment(alignment) {
+  delete alignment.ref;
+  alignment.occurrences = 100000;
+  alignment.occurrence = 100000;
+}
+
+/**
+ * business logic for convertAlignmentFromVerseToVerseSpan:
+ *      for each alignment converts mapping to original verse by ref to be mapped to original language verse span by removing ref and updating occurrence(s)
+ * @param {object} originalVerseSpanData - original bible merged to verse span
+ * @param {object} alignedVerseObjects - aligned verse objects for current verse (modified)
+ * @param {number|string} chapter
+ * @param {number} low - low verse number of span
+ * @param {number} hi - high verse number of span
+ * @param blankVerseAlignments - raw verse alignments for extracting word counts for each verse
+ * @return {{verseObjects}} - original verse span data
+ */
+export function convertAlignmentFromVerseToVerseSpanSub(originalVerseSpanData, alignedVerseObjects, chapter, low, hi, blankVerseAlignments) {
+  const bibleVerse = { verseObjects: originalVerseSpanData };
+  const alignments = getVerseAlignments(alignedVerseObjects.verseObjects);
+
+  for (let alignment of alignments) {
+    const ref = alignment.ref || '';
+    const refParts = ref.split(':');
+    let verseRef;
+    let chapterRef = chapter; // default to current chapter
+    const word = alignment.content;
+    let occurrence = alignment.occurrence;
+    let occurrences = 0;
+
+    if (refParts.length > 1) { // if both chapter and verse
+      verseRef = parseInt(refParts[1]);
+      chapterRef = refParts[0];
+    } else { // verse only
+      verseRef = parseInt(refParts[0]);
+    }
+
+    if (chapterRef.toString() !== chapter.toString()) {
+      console.warn(`convertAlignmentFromVerseToVerseSpan() - alignment of word "${word}:${occurrence}" - chapter in ref "${ref}" does not match current chapter ${chapter} for verse span "${low}-${hi}" - skipping`);
+      invalidateAlignment(alignment);
+      continue;
+    }
+
+    if (!(occurrence > 0)) {
+      console.warn(`convertAlignmentFromVerseToVerseSpan() - alignment of word "${word}:${occurrence}" - invalid occurrence in current verse span "${low}-${hi}" - skipping`);
+      invalidateAlignment(alignment);
+      continue;
+    }
+
+    if (!((verseRef >= low) || (verseRef <= hi))) {
+      console.warn(`convertAlignmentFromVerseToVerseSpan() - alignment of word "${word}:${occurrence}" - verse in ref ${ref} is not within current verse span "${low}-${hi}" - skipping`);
+      invalidateAlignment(alignment);
+      continue;
+    }
+
+    // transform occurrence(s) from verse based to verse span
+    for (let verse = low; verse <= hi; verse++) {
+      const wordCount = getWordCountInVerse(blankVerseAlignments, verse, word);
+      occurrences += wordCount;
+
+      if (verse < verseRef) {
+        occurrence += wordCount; // add word counts for lower verses to occurrence
+      }
+    }
+
+    if ((occurrence > occurrences)) {
+      console.warn(`convertAlignmentFromVerseToVerseSpan() - alignment of word "${word}:${occurrence}" - beyond ocurrences ${occurrences} in current verse span "${low}-${hi}" - skipping`);
+      invalidateAlignment(alignment);
+    } else {
+      delete alignment.ref;
+      alignment.occurrences = occurrences;
+      alignment.occurrence = occurrence;
+    }
+  }
+  return bibleVerse;
+}
+
+/**
  * dive down into milestone to extract words and text
  * @param {Object} verseObject - milestone to parse
  * @return {string} text content of milestone
@@ -91,6 +235,43 @@ const replaceWordsAndMilestones = (verseObject, wordSpacing) => {
   }
   return { verseObject, wordSpacing };
 };
+
+/**
+ * check if string has alignment markers
+ * @param {String} usfmData
+ * @return {Boolean} true if string has alignment markers
+ */
+export const hasAlignments = usfmData => {
+  const hasAlignment = usfmData.includes('\\zaln-s') || usfmData.includes('\\w');
+  return hasAlignment;
+};
+
+/**
+ * @description verseObjects with occurrences via string
+ * @param {String} usfmData - The string to search in
+ * @return {String} - cleaned USFM
+ */
+export const cleanAlignmentMarkersFromString = usfmData => {
+  if (hasAlignments(usfmData)) {
+    // convert string using usfm to JSON
+    const verseObjects = usfmjs.toJSON('\\v 1 ' + usfmData, { chunk: true }).verses['1'];
+    return getUsfmForVerseContent(verseObjects);
+  }
+  return usfmData;
+};
+
+/**
+ * converts verse from verse objects or string to USFM string
+ * @param verseData
+ * @return {string}
+ */
+export function convertVerseToUSFM(verseData) {
+  if (typeof verseData === 'string') { // if already text, then nothing to convert
+    return verseData;
+  }
+
+  return convertVerseDataToUSFM(verseData);
+}
 
 /**
  * converts verse from verse objects to USFM string
@@ -196,8 +377,8 @@ const flattenChapterData = (chapterData) => {
   return usfmStr;
 }
 
-export const removeAlignments = (_usfmText) => {
-  const usfmJSON = usfmjs.toJSON(_usfmText);
+export const removeAlignments = (usfm) => {
+  const usfmJSON = usfmjs.toJSON(usfm);
   let usfmStr = '';
 
   usfmJSON.headers.forEach(header => {
