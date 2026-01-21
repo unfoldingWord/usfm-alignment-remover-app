@@ -97,7 +97,7 @@ const replaceWordsAndMilestones = (verseObject, wordSpacing) => {
  * @param verseData
  * @return {string}
  */
-function convertVerseDataToUSFM(verseData) {
+export function convertVerseDataToUSFM(verseData) {
   const outputData = {
     'chapters': {},
     'headers': [],
@@ -122,7 +122,7 @@ function convertVerseDataToUSFM(verseData) {
  * @param {Object|Array} verseData
  * @return {Object}
  */
-function removeMilestonesAndWordMarkers(verseData) {
+export function removeMilestonesAndWordMarkers(verseData) {
   const verseObjects = verseData?.verseObjects || verseData;
   if (verseObjects) {
     let wordSpacing = '';
@@ -147,46 +147,57 @@ function removeMilestonesAndWordMarkers(verseData) {
  * @param {Object|Array} verseData
  * @return {String}
  */
-const getUsfmForVerseContent = (verseData) => {
+export const getUsfmForVerseContent = (verseData) => {
   verseData = removeMilestonesAndWordMarkers(verseData);
   return convertVerseDataToUSFM(verseData);
+};
+
+const sortKeys = (keys) => {
+  return keys.sort((a, b) => {
+    const numA = parseInt(a.split('-')[0], 10);
+    const numB = parseInt(b.split('-')[0], 10);
+
+    if (isNaN(numA) && isNaN(numB)) {
+      // Both are NaN, sort lexicographically
+      return a.localeCompare(b);
+    } else if (isNaN(numA)) {
+      // Only numA is NaN, numA should come after numB
+      return 1;
+    } else if (isNaN(numB)) {
+      // Only numB is NaN, numB should come after numA
+      return -1;
+    } else {
+      // Both are numbers, sort numerically
+      return numA - numB;
+    }
+  })
 };
 
 const flattenChapterData = (chapterData) => {
   let usfmStr = '';
 
-  Object.keys(chapterData).sort((a, b) => {
-    if (a === "front") return -1;
-    if (b === "front") return 1;
-    
-    const parseKey = (key) => {
-      const parts = key.split(/[-,]/);
-      return {
-        first: parseInt(parts[0]) || 0,
-        second: parts[1] ? parseInt(parts[1]) || 0 : 0
-      };
-    };
-    
-    const aParsed = parseKey(a);
-    const bParsed = parseKey(b);
-    
-    if (aParsed.first !== bParsed.first) {
-      return aParsed.first - bParsed.first;
+  if ("front" in chapterData) {
+    usfmStr += getUsfmForVerseContent(chapterData["front"]);
+  }
+  
+  const sortedKeys = sortKeys(Object.keys(chapterData));
+
+  sortedKeys.forEach((verseNum) => {
+    if (verseNum === "front") {
+      return;
     }
-    return aParsed.second - bParsed.second;
-  }).forEach((verseNum) => {
     const verseData = chapterData[verseNum];
-    if (verseNum != "front") {
-      usfmStr += `\\v ${verseNum} `;
+    if (usfmStr && usfmStr[usfmStr.length - 1] !== '\n') {
+      usfmStr += ' ';
     }
-    usfmStr += getUsfmForVerseContent(verseData);
+    usfmStr += `\\v ${verseNum} ` + getUsfmForVerseContent(verseData);
   });
 
   return usfmStr;
 }
 
-export const removeAlignments = (usfmContent) => {
-  const usfmJSON = usfmjs.toJSON(usfmContent);
+export const removeAlignments = (_usfmText) => {
+  const usfmJSON = usfmjs.toJSON(_usfmText);
   let usfmStr = '';
 
   usfmJSON.headers.forEach(header => {
